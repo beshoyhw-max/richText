@@ -62,7 +62,7 @@
                 style="display: none"
               />
               <div class="small">
-                *请上传认证项目的文档，说明文档等。有效期为5分钟，请尽快上传...
+                *上传文件大小请在200兆以下
               </div>
               <div class="error" v-if="fileError">{{ fileError }}</div>
               <div class="attachment-list" v-if="attachments.length > 0">
@@ -94,7 +94,7 @@
 
         <!-- Project Category - MULTISELECT -->
         <div class="form-row">
-          <label class="form-label required-label">所属项目</label>
+          <label class="form-label required-label">所属领域</label>
           <div class="form-control">
             <div class="multiselect-wrapper" ref="multiselectWrapper">
               <div class="multiselect-input-container" @click="toggleProject">
@@ -114,7 +114,7 @@
                   <input
                     type="text"
                     class="multiselect-search-input"
-                    :placeholder="selectedProjects.length === 0 ? '请选择认证项目' : ''"
+                    :placeholder="selectedProjects.length === 0 ? '请选择领域' : ''"
                     readonly
                     @click.stop="toggleProject"
                   />
@@ -161,7 +161,7 @@
                 v-else-if="selectedExperts.length === 0"
                 class="no-experts-placeholder"
               >
-                选择项目后，相关专家将自动显示在这里
+                选择领域后，相关专家将自动显示在这里
               </div>
               <div v-else class="experts-grid">
                 <div
@@ -206,6 +206,12 @@
 
         <!-- Actions -->
         <div class="actions-centered">
+         <div class="custom-checkbox-container" @click="isAnonymousChecked = !isAnonymousChecked">
+            <div class="custom-checkbox" :class="{ 'checked': isAnonymousChecked }">
+              <span v-if="isAnonymousChecked">✓</span>
+            </div>
+            <label>匿名发布</label>
+          </div>
           <button class="action-btn btn-cancel" @click="cancel">取消</button>
           <button class="action-btn btn-draft" @click="saveDraft">保存</button>
           <button class="action-btn btn-submit" @click="submitForm">
@@ -235,7 +241,8 @@
         quill: null,
         imageUploadApiUrl: 'xx?',
         imageBaseUrl: 'xx',
-        attachments: []
+        attachments: [],
+        isAnonymousChecked: false,
       }
     },
 
@@ -306,21 +313,22 @@
         return {
           id: id || expertUserCn, // Use full string as fallback
           name: name || expertUserCn, // Use full string as fallback
-          originalData: expertItem // Keep original data if needed
+          originalData: expertItem,
+          userId: expertItem.expertUserId.toLowerCase()  // Keep original data if needed
         };
       },
 
       async fetchExpertsByCategory(category) {
         try {
           this.isLoadingExperts = true;
+            Hae.View.loading();
+
           
           const response = await fetch('xx/findList ', {
             method: 'POST',
-            credentials: 'include', // Include credentials (cookies, authorization headers)
+            credentials: 'include', 
             headers: {
               'Content-Type': 'application/json',
-              // Add any additional authentication headers if needed
-              // 'Authorization': `Bearer ${yourToken}` // Uncomment and add token if needed
             },
             body: JSON.stringify({
               expertCategory: category
@@ -328,6 +336,8 @@
           });
 
           if (!response.ok) {
+                          Hae.View.loadingClose();
+
             throw new Error(`HTTP error! status: ${response.status}`);
           }
 
@@ -348,6 +358,7 @@
           }
           
           // Parse each expert to extract name and ID from expertUserCn
+          
           return expertsArray.map(expertItem => this.parseExpertData(expertItem));
           
         } catch (error) {
@@ -355,6 +366,8 @@
           alert('获取专家信息失败，请重试');
           return [];
         } finally {
+                          Hae.View.loadingClose();
+
           this.isLoadingExperts = false;
         }
       },
@@ -363,7 +376,7 @@
         return new Promise((resolve, reject) => {
           Hae.View.loading();
           this.$service.network
-            .post('//xxathorization', {})
+            .post('xx/getedmauthorization', {})
             .then((res) => {
               let token = res.data.authorization;
               resolve(token);
@@ -387,7 +400,8 @@
             this.$service.network
               .put('xx/documents', formData, {
                 headers: {
-                  ,
+                  'Content-Type': 'multipart/form-data',
+
                 }
               })
               .then((res) => {
@@ -532,21 +546,36 @@
         })
       },
 
-      removeExpertsByProject(proj) {
-        // When a project is deselected, we need to remove its experts
-        // but keep experts that belong to other selected projects
-        
-        // If no projects are selected, clear all experts
-        if (this.selectedProjects.length === 0) {
-          this.selectedExperts = []
-          return
-        }
-        
-        // For a more sophisticated approach, you'd need to track which experts
-        // belong to which projects. For now, we'll reload all experts from
-        // remaining selected projects
-        this.reloadAllExperts()
-      },
+    async removeExpertsByProject(proj) {
+      // When a project is deselected, we need to remove its experts
+      // but keep experts that belong to other selected projects.
+
+      // If no projects are selected, clear all experts. This is correct.
+      if (this.selectedProjects.length === 0) {
+        this.selectedExperts = []
+        return
+      }
+
+      // 1. Get the categories of the projects that are still selected.
+      // Using a Set is efficient for quick lookups.
+      const remainingCategories = new Set(this.selectedProjects.map(p => p.category));
+
+      // 2. Check if the category of the removed project is still needed by another selected project.
+      if (remainingCategories.has(proj.category)) {
+        // If the category still exists (e.g., two "Engineering" projects were selected
+        // and only one was removed), then no experts from this category should be removed.
+        // We can simply exit.
+        return;
+      }
+
+      // 3. If the category is unique to the removed project, fetch its experts to identify them.
+      const expertsToRemove = await this.fetchExpertsByCategory(proj.category);
+      const expertIdsToRemove = new Set(expertsToRemove.map(e => e.id));
+
+      // 4. Filter the main list, keeping only the experts whose ID is NOT in the removal set.
+      this.selectedExperts = this.selectedExperts.filter(expert => !expertIdsToRemove.has(expert.id));
+    },
+
 
       async reloadAllExperts() {
         // Clear current experts
@@ -655,37 +684,86 @@
         }
       },
 
-      submitForm() {
-        if (this.selectedProjects.length === 0) {
-          alert('请选择所属项目')
-          return
-        }
+
+      async sendPostData(status) {
+        // Validation
         if (!this.postTitle.trim()) {
-          alert('请输入标题')
-          return
+          alert('请输入标题');
+          return;
+        }
+        if (!this.content || this.content.trim() === '<p><br></p>' || this.content.trim() === '') {
+          alert('请输入详情');
+          return;
+        }
+        if (this.selectedProjects.length === 0) {
+          alert('请选择所属项目');
+          return;
         }
 
-        const formData = {
+        const postData = {
+          postCategory: JSON.stringify(this.selectedProjects.map(p => p.name)),
+          comments: 0,
+          postTags: JSON.stringify(this.tags),
+          taggedUsers: JSON.stringify(this.selectedExperts.map(e => e.userId)),
+          attachments: JSON.stringify(this.attachments.map(f => ({ docId: f.docId, docName: f.docName }))),
+          isAnonymous: this.isAnonymousChecked ? '1' : '0',
           postTitle: this.postTitle,
-          content: this.content,
-          fileName: this.fileName,
-          projects: this.selectedProjects.map(p => p.name),
-          tags: this.tags,
-          experts: this.selectedExperts
-        }
+          views: 0,
+          postDetails: this.content,
+          status: status,
+          likes: 0,
+          creatorUserCn: $vm.$service.base.getUserInfoSync().displayName
 
-        console.log('Form Submitted:', formData)
-        alert('提交成功!')
+        };
+
+        console.log('Sending post data:', postData);
+
+        try {
+          const response = await fetch('xx/posts/insert', {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(postData),
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error('API Error Response:', errorText);
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+
+          const result = await response.json();
+          console.log('API Response:', result);
+
+          if (status === '1') {
+            alert('提交成功!');
+          } else {
+            alert('草稿已保存!');
+          }
+          // Optionally, redirect or clear the form
+          // location.reload(); 
+        } catch (error) {
+          console.error('Error sending post data:', error);
+          if (status === '1') {
+            alert('提交失败，请重试');
+          } else {
+            alert('草稿保存失败，请重试');
+          }
+        }
+      },
+
+      submitForm() {
+        this.sendPostData('1');
       },
 
       saveDraft() {
-        console.log('Save draft')
-        alert('草稿已保存!')
+        this.sendPostData('0');
       },
 
       cancel() {
         if (confirm('确定要取消吗？未保存的更改将丢失。')) {
-          localStorage.removeItem('richTextContent')
           location.reload()
         }
       }
@@ -764,7 +842,6 @@
     border-radius: 0.5vw;
     background-color: #fff;
     box-shadow: 0 0.1vw 0.3vw rgba(0, 0, 0, 0.05);
-    min-height: 30vh;
     display: flex;
     flex-direction: column;
   }
@@ -870,7 +947,10 @@
     flex: 1;
     border-radius: 0 0 0.5vw 0.5vw;
   }
-
+    .ql-editor
+    {
+        min-height: 10vw !important;
+    }
   .rich-text-editor :deep(.ql-editor) {
     padding: 1.5vh 1.5vw;
     min-height: 25vh;
@@ -1686,6 +1766,38 @@
     background-color: #b00118;
     border-color: #b00118;
   }
+  
+   .custom-checkbox-container {
+    display: flex;
+    align-items: center;
+    gap: 0.5vw;
+    color: #718096;
+    font-size: 0.9vw;
+    cursor: pointer;
+  }
+
+  .custom-checkbox {
+    width: 1.2vw;
+    height: 1.2vw;
+    border: 0.1vw solid #cbd5e0;
+    border-radius: 0.2vw;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+  }
+
+  .custom-checkbox.checked {
+    background-color: #4299e1;
+    border-color: #4299e1;
+  }
+
+  .custom-checkbox span {
+    color: white;
+    font-size: 1vw;
+    font-weight: bold;
+  }
+
 
   /* ========================================
      RESPONSIVE BREAKPOINTS
